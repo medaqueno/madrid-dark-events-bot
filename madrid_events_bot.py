@@ -12,7 +12,7 @@ import json
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 import requests
 from bs4 import BeautifulSoup
 import spotipy
@@ -22,6 +22,107 @@ import logging
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+class SpotifyTokenManager:
+    """Manages Spotify tokens with automatic refresh capability."""
+
+    def __init__(self, refresh_token: Optional[str] = None, access_token: Optional[str] = None):
+        """
+        Initialize token manager.
+
+        Args:
+            refresh_token: Long-lived refresh token (preferred)
+            access_token: Short-lived access token (fallback)
+        """
+        self.client_id = os.getenv('SPOTIFY_CLIENT_ID')
+        self.client_secret = os.getenv('SPOTIFY_CLIENT_SECRET')
+        self.refresh_token = refresh_token
+        self.access_token = access_token
+        self.token_expires_at = None
+
+        if not self.client_id or not self.client_secret:
+            raise ValueError("Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET")
+
+    def get_valid_access_token(self) -> str:
+        """
+        Get a valid access token, refreshing if necessary.
+
+        Returns the current access token, refreshing from refresh_token if expired.
+        """
+        # If we have a refresh token, use OAuth to auto-renew
+        if self.refresh_token:
+            return self._refresh_access_token()
+
+        # Fallback: use provided access token (will expire after 1 hour)
+        if self.access_token:
+            logger.warning("Using access token without refresh - will expire in ~1 hour")
+            return self.access_token
+
+        raise ValueError("No valid tokens provided")
+
+    def _refresh_access_token(self) -> str:
+        """Refresh access token using refresh token."""
+        try:
+            logger.info("🔄 Refreshing Spotify access token...")
+
+            # Use Spotify's token endpoint
+            auth_url = "https://accounts.spotify.com/api/token"
+            payload = {
+                'grant_type': 'refresh_token',
+                'refresh_token': self.refresh_token,
+                'client_id': self.client_id,
+                'client_secret': self.client_secret,
+            }
+
+            response = requests.post(auth_url, data=payload, timeout=10)
+            response.raise_for_status()
+
+            token_data = response.json()
+            self.access_token = token_data['access_token']
+            self.token_expires_at = datetime.now() + timedelta(
+                seconds=token_data.get('expires_in', 3600)
+            )
+
+            logger.info(f"✅ Token refreshed. Expires at: {self.token_expires_at}")
+            return self.access_token
+
+        except Exception as e:
+            logger.error(f"❌ Failed to refresh token: {e}")
+            raise
+
+    @staticmethod
+    def from_env_or_args(args: list) -> 'SpotifyTokenManager':
+        """
+        Create TokenManager from environment or command-line arguments.
+
+        Priority:
+        1. SPOTIFY_REFRESH_TOKEN env var (best)
+        2. First argument to script (refresh token)
+        3. SPOTIFY_ACCESS_TOKEN env var (fallback)
+        4. Second argument to script (access token fallback)
+        """
+        refresh_token = os.getenv('SPOTIFY_REFRESH_TOKEN')
+        access_token = os.getenv('SPOTIFY_ACCESS_TOKEN')
+
+        # Check command-line arguments
+        if len(args) > 1:
+            # First arg is likely refresh token (long)
+            if len(args[1]) > 100:
+                refresh_token = args[1]
+            else:
+                access_token = args[1]
+
+        if len(args) > 2:
+            access_token = args[2]
+
+        if not refresh_token and not access_token:
+            raise ValueError(
+                "No Spotify tokens provided!\n"
+                "Usage: python3 madrid_events_bot.py <refresh_token> [access_token]\n"
+                "Or set: SPOTIFY_REFRESH_TOKEN or SPOTIFY_ACCESS_TOKEN env vars"
+            )
+
+        return SpotifyTokenManager(refresh_token=refresh_token, access_token=access_token)
 
 # Dark music genres and keywords
 DARK_GENRES = {
@@ -43,8 +144,19 @@ DARK_GENRES = {
 }
 
 class MadridEventsBot:
-    def __init__(self, spotify_token: str):
-        self.spotify = spotipy.Spotify(auth=spotify_token)
+    def __init__(self, token_manager: SpotifyTokenManager):
+        """
+        Initialize the bot with a token manager.
+
+        Args:
+            token_manager: SpotifyTokenManager instance
+        """
+        self.token_manager = token_manager
+
+        # Get valid access token (auto-refreshes if needed)
+        access_token = token_manager.get_valid_access_token()
+        self.spotify = spotipy.Spotify(auth=access_token)
+
         self.events = []
         self.user_preferences = {}
 
@@ -372,26 +484,30 @@ class MadridEventsBot:
             return f"❌ Error running bot: {str(e)}"
 
 def main():
-    # Get Spotify token from environment or argument
-    spotify_token = os.getenv('SPOTIFY_ACCESS_TOKEN')
-    if not spotify_token and len(sys.argv) > 1:
-        spotify_token = sys.argv[1]
+    """Main entry point for the Madrid Dark Events Bot."""
+    try:
+        # Create token manager (handles refresh automatically)
+        token_manager = SpotifyTokenManager.from_env_or_args(sys.argv)
 
-    if not spotify_token:
-        print("ERROR: Spotify access token required!")
-        print("Usage: python3 madrid_events_bot.py <token>")
-        print("Or set SPOTIFY_ACCESS_TOKEN environment variable")
-        sys.exit(1)
+        logger.info("🎵 Madrid Dark Events Bot Starting...")
+        logger.info(f"Using Spotify credentials (Client ID: {token_manager.client_id[:10]}...)")
 
-    # Run bot
-    bot = MadridEventsBot(spotify_token)
-    report = bot.run()
+        # Run bot
+        bot = MadridEventsBot(token_manager)
+        report = bot.run()
 
-    # Print report (for logging/debugging)
-    print(report)
+        # Print report (for logging/debugging)
+        print(report)
 
-    # In NanoClaw context, send to Telegram via mcp__nanoclaw__send_message
-    # This would be handled by the scheduler task
+        # In NanoClaw context, send to Telegram via mcp__nanoclaw__send_message
+        # This would be handled by the scheduler task
+
+        return True
+
+    except Exception as e:
+        logger.error(f"❌ Bot failed: {e}")
+        logger.exception("Full traceback:")
+        return False
 
 if __name__ == "__main__":
     main()
