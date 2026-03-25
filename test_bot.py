@@ -90,15 +90,15 @@ def test_spotify_auth(token_str):
 
         logger.info(f"Token provided: {token_str[:20]}...")
 
-        # Create token manager (will auto-refresh if needed)
+        # Create token manager (refreshes immediately at init)
         logger.info("Creating SpotifyTokenManager...")
         token_manager = SpotifyTokenManager(
             refresh_token=token_str if len(token_str) > 100 else None,
             access_token=token_str if len(token_str) <= 100 else None
         )
 
-        logger.info("Getting valid access token...")
-        access_token = token_manager.get_valid_access_token()
+        logger.info("Getting access token from manager...")
+        access_token = token_manager.get_access_token()
 
         logger.info("Initializing Spotify client...")
         sp = spotipy.Spotify(auth=access_token)

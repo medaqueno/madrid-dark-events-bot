@@ -24,48 +24,49 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class SpotifyTokenManager:
-    """Manages Spotify tokens with automatic refresh capability."""
+    """Simple token manager: refresh once at startup, use for entire execution."""
 
     def __init__(self, refresh_token: Optional[str] = None, access_token: Optional[str] = None):
         """
         Initialize token manager.
 
+        Strategy: Use refresh token to get fresh access token once at startup.
+        Simple and efficient for weekly execution.
+
         Args:
             refresh_token: Long-lived refresh token (preferred)
-            access_token: Short-lived access token (fallback)
+            access_token: Short-lived access token (fallback if no refresh token)
         """
         self.client_id = os.getenv('SPOTIFY_CLIENT_ID')
         self.client_secret = os.getenv('SPOTIFY_CLIENT_SECRET')
         self.refresh_token = refresh_token
-        self.access_token = access_token
-        self.token_expires_at = None
+        self.access_token = None
 
         if not self.client_id or not self.client_secret:
             raise ValueError("Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET")
 
-    def get_valid_access_token(self) -> str:
-        """
-        Get a valid access token, refreshing if necessary.
+        # Refresh immediately if we have a refresh token, otherwise use provided access token
+        if refresh_token:
+            self.access_token = self._refresh_access_token()
+        elif access_token:
+            logger.warning("⚠️  Using access token (expires in ~1 hour). Prefer refresh token.")
+            self.access_token = access_token
+        else:
+            raise ValueError("No refresh token or access token provided")
 
-        Returns the current access token, refreshing from refresh_token if expired.
-        """
-        # If we have a refresh token, use OAuth to auto-renew
-        if self.refresh_token:
-            return self._refresh_access_token()
-
-        # Fallback: use provided access token (will expire after 1 hour)
-        if self.access_token:
-            logger.warning("Using access token without refresh - will expire in ~1 hour")
-            return self.access_token
-
-        raise ValueError("No valid tokens provided")
+    def get_access_token(self) -> str:
+        """Return the access token for Spotify API calls."""
+        return self.access_token
 
     def _refresh_access_token(self) -> str:
-        """Refresh access token using refresh token."""
-        try:
-            logger.info("🔄 Refreshing Spotify access token...")
+        """
+        Refresh access token using refresh token (called once at startup).
 
-            # Use Spotify's token endpoint
+        One-time renewal per weekly execution: Simple and efficient.
+        """
+        try:
+            logger.info("🔄 Obtaining fresh Spotify access token from refresh token...")
+
             auth_url = "https://accounts.spotify.com/api/token"
             payload = {
                 'grant_type': 'refresh_token',
@@ -78,13 +79,10 @@ class SpotifyTokenManager:
             response.raise_for_status()
 
             token_data = response.json()
-            self.access_token = token_data['access_token']
-            self.token_expires_at = datetime.now() + timedelta(
-                seconds=token_data.get('expires_in', 3600)
-            )
+            new_token = token_data['access_token']
 
-            logger.info(f"✅ Token refreshed. Expires at: {self.token_expires_at}")
-            return self.access_token
+            logger.info(f"✅ Fresh access token obtained (valid for ~1 hour)")
+            return new_token
 
         except Exception as e:
             logger.error(f"❌ Failed to refresh token: {e}")
@@ -93,20 +91,19 @@ class SpotifyTokenManager:
     @staticmethod
     def from_env_or_args(args: list) -> 'SpotifyTokenManager':
         """
-        Create TokenManager from environment or command-line arguments.
+        Create TokenManager from environment variables or command-line arguments.
 
         Priority:
         1. SPOTIFY_REFRESH_TOKEN env var (best)
-        2. First argument to script (refresh token)
+        2. First argument to script (if long = refresh token)
         3. SPOTIFY_ACCESS_TOKEN env var (fallback)
-        4. Second argument to script (access token fallback)
+        4. Second argument to script (fallback)
         """
         refresh_token = os.getenv('SPOTIFY_REFRESH_TOKEN')
         access_token = os.getenv('SPOTIFY_ACCESS_TOKEN')
 
         # Check command-line arguments
         if len(args) > 1:
-            # First arg is likely refresh token (long)
             if len(args[1]) > 100:
                 refresh_token = args[1]
             else:
@@ -118,7 +115,7 @@ class SpotifyTokenManager:
         if not refresh_token and not access_token:
             raise ValueError(
                 "No Spotify tokens provided!\n"
-                "Usage: python3 madrid_events_bot.py <refresh_token> [access_token]\n"
+                "Usage: python3 madrid_events_bot.py <refresh_token>\n"
                 "Or set: SPOTIFY_REFRESH_TOKEN or SPOTIFY_ACCESS_TOKEN env vars"
             )
 
@@ -149,12 +146,12 @@ class MadridEventsBot:
         Initialize the bot with a token manager.
 
         Args:
-            token_manager: SpotifyTokenManager instance
+            token_manager: SpotifyTokenManager instance (refreshed at startup)
         """
         self.token_manager = token_manager
 
-        # Get valid access token (auto-refreshes if needed)
-        access_token = token_manager.get_valid_access_token()
+        # Get access token (already refreshed at startup)
+        access_token = token_manager.get_access_token()
         self.spotify = spotipy.Spotify(auth=access_token)
 
         self.events = []
