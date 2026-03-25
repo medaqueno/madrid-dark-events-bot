@@ -38,7 +38,7 @@ def test_dependencies():
     deps = {
         'spotipy': 'Spotify API client',
         'requests': 'HTTP client',
-        'beautifulsoup4': 'HTML parser',
+        'bs4': 'HTML parser',
         'lxml': 'XML/HTML backend',
     }
 
