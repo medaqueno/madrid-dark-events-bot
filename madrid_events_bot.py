@@ -67,9 +67,11 @@ class MadridEventsBot:
             self.user_preferences = {
                 'genres': sorted_genres,
                 'timestamp': datetime.now().isoformat(),
-                'top_artists': [a['name'] for a in top_artists['items'][:5]]
+                'top_artists': [a['name'] for a in top_artists['items'][:15]]  # Extended to 15 for better matching
             }
 
+            top_artist_names = ', '.join([a['name'] for a in top_artists['items'][:3]])
+            logger.info(f"User top artists: {top_artist_names}")
             logger.info(f"User dark genre affinity: {sorted_genres[:3]}")
             return self.user_preferences
 
@@ -246,14 +248,53 @@ class MadridEventsBot:
         return any(kw in title_lower for kw in dark_keywords)
 
     def _calculate_relevance(self, event_title: str) -> float:
-        """Calculate relevance score based on user preferences (0-1)."""
+        """
+        Calculate relevance score based on user preferences (0-1).
+
+        Strategy:
+        1. Check if event title contains user's top artists (high weight)
+        2. Check if event title contains dark genres (medium weight)
+        3. Check dark keywords (low weight)
+        """
         score = 0.5  # baseline
         title_lower = event_title.lower()
 
-        # Check against user's top genres
-        for genre, weight in self.user_preferences.get('genres', [])[:3]:
-            if genre.lower() in title_lower:
-                score += weight * 0.1
+        # ✅ Strategy 1: Match user's top artists (HIGHEST PRIORITY)
+        # Events with the user's favorite artists are most relevant
+        top_artists = self.user_preferences.get('top_artists', [])
+        for artist_name in top_artists[:10]:  # Check top 10 artists
+            artist_lower = artist_name.lower()
+            if artist_lower in title_lower:
+                score += 0.35  # High boost for artist match
+                logger.debug(f"Artist match: {artist_name} in '{event_title}' → +0.35")
+                break  # Only count first artist match
+
+        # ✅ Strategy 2: Match user's top dark genres (MEDIUM PRIORITY)
+        # If no artist match, genre matching provides context about event style
+        if score == 0.5:  # Only if no artist match found
+            for genre, weight in self.user_preferences.get('genres', [])[:5]:
+                genre_lower = genre.lower()
+                if genre_lower in title_lower:
+                    score += (weight * 0.15)  # Scale weight to boost
+                    logger.debug(f"Genre match: {genre} (weight {weight}) in '{event_title}' → +{weight*0.15:.2f}")
+                    break  # Only count first genre match
+
+        # ✅ Strategy 3: Dark keyword bonus (LOW PRIORITY, supplementary)
+        dark_keywords_bonus = {
+            'goth': 0.08,
+            'metal': 0.10,
+            'dark': 0.05,
+            'black metal': 0.15,
+            'doom': 0.10,
+            'post-punk': 0.12,
+            'neofolk': 0.12,
+            'industrial': 0.08,
+        }
+        for keyword, bonus in dark_keywords_bonus.items():
+            if keyword in title_lower:
+                score += bonus
+                logger.debug(f"Keyword match: '{keyword}' → +{bonus}")
+                break
 
         return min(score, 1.0)
 
