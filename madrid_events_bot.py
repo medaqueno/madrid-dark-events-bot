@@ -135,7 +135,7 @@ class MadridEventsBot:
         return events
 
     def scrape_gotifiestas(self) -> List[Dict]:
-        """Scrape dark events from gotifiestas.com."""
+        """Scrape dark events from gotifiestas.com via lightweight scraping."""
         events = []
         try:
             url = "https://www.gotifiestas.com/madrid"
