@@ -33,8 +33,9 @@ DARK_GENRES = {
     'death metal': 0.8,
     'post-metal': 1.0,
     'post-rock': 0.7,
+    'post-punk': 0.95,  # Added post-punk
     'shoegaze': 0.6,
-    'neofolk': 0.85,
+    'neofolk': 0.95,  # Increased weight from 0.85 to 0.95
     'dark electronic': 0.9,
     'industrial': 0.8,
     'ethereal wave': 0.85,
@@ -237,9 +238,9 @@ class MadridEventsBot:
     def _is_dark_event(self, title: str) -> bool:
         """Check if event title contains dark/gothic/metal keywords."""
         dark_keywords = [
-            'goth', 'dark', 'metal', 'black', 'doom', 'post-rock', 'shoegaze',
+            'goth', 'dark', 'metal', 'black', 'doom', 'post-rock', 'post-punk', 'shoegaze',
             'neofolk', 'electronic', 'industrial', 'wave', 'coldwave', 'post-metal',
-            'doom metal', 'gothic rock', 'darkwave', 'ethereal'
+            'doom metal', 'gothic rock', 'darkwave', 'ethereal', 'punk'
         ]
         title_lower = title.lower()
         return any(kw in title_lower for kw in dark_keywords)
